@@ -14,14 +14,18 @@ type Store struct {
 	db *sql.DB
 }
 
-func new(db *sql.DB) Store {
+func New(db *sql.DB) Store {
 	return Store{db: db}
 }
 
 func (s Store) GetCarById(ctx context.Context, id string) (models.Car, error) {
 	var car models.Car
 
-	query := `SELECT c.id,c.name,c.year,c.brand,c.fuel_type,c.engine_id,c.price,c.created_at,c.updated_at,e.id,e.displacement,e.no_of_cylinders,e.car_range FROM car c LEFT JOIN engine e ON c.engine_id = e.id WHERE c.id=$1 `
+	query := `SELECT c.id, c.name, c.year, c.brand, c.fuel_type, c.engine_id, c.price, c.created_at, c.updated_at, 
+			  e.id, e.displacement, e.no_of_cylinders, e.car_range 
+			  FROM car c 
+			  LEFT JOIN engine e ON c.engine_id = e.id 
+			  WHERE c.id = $1`
 
 	row := s.db.QueryRowContext(ctx, query, id)
 	err := row.Scan(
@@ -41,7 +45,7 @@ func (s Store) GetCarById(ctx context.Context, id string) (models.Car, error) {
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return car, err
+			return car, nil // No rows found, return an empty car
 		}
 		return car, err
 	}
@@ -51,16 +55,25 @@ func (s Store) GetCarById(ctx context.Context, id string) (models.Car, error) {
 func (s Store) GetCarByBrand(ctx context.Context, brand string, isEngine bool) ([]models.Car, error) {
 	var cars []models.Car
 	var query string
+
 	if isEngine {
-		query = `SELECT c.id,c.name,c.year,c.brand,c.fuel_type,c.engine_id,c.price,c.created_at,c.updated_at,e.id,e.displacement,e.e.no_of_cyclinders,e.car_range FROM car  c LEFT  JOIN  engine e ON c.engine_id=e.id WHERE c.brand =$1`
+		query = `SELECT c.id, c.name, c.year, c.brand, c.fuel_type, c.engine_id, c.price, c.created_at, c.updated_at, 
+				  e.id, e.displacement, e.no_of_cylinders, e.car_range 
+				  FROM car c 
+				  LEFT JOIN engine e ON c.engine_id = e.id 
+				  WHERE c.brand = $1`
 	} else {
-		query = `SELECT id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at FROM car WHERE brand = $1`
+		query = `SELECT id, name, year, brand, fuel_type, engine_id, price, created_at, updated_at 
+				  FROM car 
+				  WHERE brand = $1`
 	}
+
 	rows, err := s.db.QueryContext(ctx, query, brand)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
+
 	for rows.Next() {
 		var car models.Car
 		if isEngine {
@@ -102,21 +115,24 @@ func (s Store) GetCarByBrand(ctx context.Context, brand string, isEngine bool) (
 		}
 		cars = append(cars, car)
 	}
+
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
 	return cars, nil
 }
+
 func (s Store) CreateCar(ctx context.Context, CarReq *models.CarRequest) (models.Car, error) {
 	var createdCar models.Car
 	var engineID uuid.UUID
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM engine WHERE id=$1", CarReq.Engine.EngineID).Scan(&engineID)
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM engine WHERE id = $1", CarReq.Engine.EngineID).Scan(&engineID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return createdCar, errors.New("engine_id does not exists in the engine table")
+			return createdCar, errors.New("engine_id does not exist in the engine table")
 		}
 		return createdCar, err
 	}
+
 	carID := uuid.New()
 	createdAt := time.Now()
 	updatedAt := createdAt
@@ -132,6 +148,7 @@ func (s Store) CreateCar(ctx context.Context, CarReq *models.CarRequest) (models
 		CreatedAt: createdAt,
 		UpdatedAt: updatedAt,
 	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return createdCar, err
@@ -143,11 +160,12 @@ func (s Store) CreateCar(ctx context.Context, CarReq *models.CarRequest) (models
 		}
 		err = tx.Commit()
 	}()
+
 	query := `
-INSERT  INTO car(id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-RETURNING id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at
-`
+		INSERT INTO car(id, name, year, brand, fuel_type, engine_id, price, created_at, updated_at)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, name, year, brand, fuel_type, engine_id, price, created_at, updated_at
+	`
 	err = tx.QueryRowContext(ctx, query,
 		newCar.ID,
 		newCar.Name,
@@ -172,6 +190,7 @@ RETURNING id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at
 	if err != nil {
 		return createdCar, err
 	}
+
 	return createdCar, nil
 }
 
@@ -188,12 +207,14 @@ func (s Store) UpdateCar(ctx context.Context, id string, carReq *models.CarReque
 		}
 		err = tx.Commit()
 	}()
+
 	query := `
-	UPDATED car
-	SET name = $2,year = $3,fuel_type =$5,engine_id=$6,price = $7,updated_at = $8
-	WHERE id = $1
-	RETURN id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at
-`
+		UPDATE car
+		SET name = $2, year = $3, brand = $4, fuel_type = $5, engine_id = $6, price = $7, updated_at = $8
+		WHERE id = $1
+		RETURNING id, name, year, brand, fuel_type, engine_id, price, created_at, updated_at
+	`
+
 	err = tx.QueryRowContext(ctx, query, id,
 		carReq.Name,
 		carReq.Year,
@@ -216,7 +237,8 @@ func (s Store) UpdateCar(ctx context.Context, id string, carReq *models.CarReque
 	if err != nil {
 		return updatedCar, err
 	}
-	return updatedCar, err
+
+	return updatedCar, nil
 }
 
 func (s Store) DeleteCar(ctx context.Context, id string) (models.Car, error) {
@@ -232,25 +254,29 @@ func (s Store) DeleteCar(ctx context.Context, id string) (models.Car, error) {
 		}
 		err = tx.Commit()
 	}()
-	err = tx.QueryRowContext(ctx, "SELECT id,name,year,brand,fuel_type,engine_id,price,created_at,updated_at FROM car WHERE id=$1`", id).Scan(
+
+	err = tx.QueryRowContext(ctx, "SELECT id, name, year, brand, fuel_type, engine_id, price, created_at, updated_at FROM car WHERE id = $1", id).Scan(
 		&deletedCar.ID, &deletedCar.Name, &deletedCar.Year, &deletedCar.Brand, &deletedCar.FuelType, &deletedCar.Engine.EngineID, &deletedCar.Price, &deletedCar.CreatedAt, &deletedCar.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.Car{}, errors.New("Car not found")
+			return models.Car{}, errors.New("car not found")
 		}
 		return models.Car{}, err
 	}
-	result, err := tx.ExecContext(ctx, "DELETE FROM car WHERE id =$1", id)
+
+	result, err := tx.ExecContext(ctx, "DELETE FROM car WHERE id = $1", id)
 	if err != nil {
 		return models.Car{}, err
 	}
+
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		return models.Car{}, err
 	}
 	if rowsAffected == 0 {
-		return models.Car{}, errors.New("No rows were deleted")
+		return models.Car{}, errors.New("no rows were deleted")
 	}
+
 	return deletedCar, nil
 }
